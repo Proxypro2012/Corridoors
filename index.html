@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CORRIDOORS — a top-down hotel horror</title>
+<link rel="stylesheet" href="css/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚪</text></svg>">
+</head>
+<body>
+<div id="game-root">
+  <canvas id="game-canvas"></canvas>
+
+  <!-- letterbox bars for cutscenes -->
+  <div id="letterbox-top" class="letterbox"></div>
+  <div id="letterbox-bottom" class="letterbox"></div>
+
+  <!-- gameplay HUD -->
+  <div id="hud" class="hidden">
+    <div id="door-counter"><span id="door-label">DOOR</span><span id="door-num">000</span></div>
+    <div id="objective"></div>
+    <div id="subtitle"></div>
+    <div id="interact-prompt" class="hidden"><kbd>E</kbd><span id="interact-text"></span></div>
+    <div id="hotbar"></div>
+    <div id="gold-display">🪙 <span id="gold-amount">0</span></div>
+    <div id="heartbeat-ui" class="hidden">
+      <div id="hb-track"><div id="hb-zone"></div><div id="hb-marker"></div></div>
+      <div id="hb-hint">press <kbd>SPACE</kbd> with the beat — stay calm</div>
+    </div>
+    <div id="guiding-hint" class="hidden"></div>
+  </div>
+
+  <!-- overlay fx -->
+  <div id="damage-vignette"></div>
+  <div id="hide-warning" class="hidden">GET OUT</div>
+  <div id="jumpscare" class="hidden"><canvas id="jumpscare-canvas" width="900" height="600"></canvas></div>
+  <div id="fade-overlay"></div>
+
+  <!-- main menu -->
+  <div id="menu-screen" class="screen">
+    <div class="menu-inner">
+      <h1 id="game-title">CORRID<span class="door-o">O</span><span class="door-o o2">O</span>RS</h1>
+      <p class="tagline">a fan-made top-down tribute to DOORS · the hotel</p>
+      <div class="menu-buttons">
+        <button id="btn-play" class="menu-btn">ENTER THE HOTEL</button>
+        <button id="btn-how" class="menu-btn small">HOW TO PLAY</button>
+        <button id="btn-mute" class="menu-btn small">SOUND: ON</button>
+      </div>
+      <p id="best-run"></p>
+      <p class="credits-line">unofficial fan project · original code, art &amp; music · inspired by DOORS by LSPLASH</p>
+    </div>
+  </div>
+
+  <!-- how to play -->
+  <div id="how-screen" class="screen hidden">
+    <div class="menu-inner how-inner">
+      <h2>SURVIVING THE HOTEL</h2>
+      <div class="how-cols">
+        <div>
+          <h3>CONTROLS</h3>
+          <ul>
+            <li><kbd>W A S D</kbd> move · mouse aims your light</li>
+            <li><kbd>SHIFT</kbd> sprint (loud) · <kbd>C</kbd> crouch (quiet)</li>
+            <li><kbd>E</kbd> interact — doors, drawers, wardrobes, items</li>
+            <li><kbd>F</kbd> toggle flashlight / lighter</li>
+            <li><kbd>1–5</kbd> hotbar · <kbd>SPACE</kbd> heartbeat minigame</li>
+            <li><kbd>ESC</kbd> pause</li>
+          </ul>
+        </div>
+        <div>
+          <h3>THE ENTITIES</h3>
+          <ul>
+            <li>Lights flicker? <b>Hide in a wardrobe.</b></li>
+            <li>A green glow returns. <b>Get out, then back in.</b></li>
+            <li>Something watches. <b>Don't look at it.</b></li>
+            <li>You hear "psst". <b>Look at it, fast.</b></li>
+            <li>It has no eyes. <b>Crouch. Silence is life.</b></li>
+            <li>Wrong numbers lie behind wrong doors.</li>
+          </ul>
+        </div>
+      </div>
+      <button id="btn-how-back" class="menu-btn small">BACK</button>
+    </div>
+  </div>
+
+  <!-- pause -->
+  <div id="pause-screen" class="screen hidden">
+    <div class="menu-inner">
+      <h2>PAUSED</h2>
+      <div class="menu-buttons">
+        <button id="btn-resume" class="menu-btn">RESUME</button>
+        <button id="btn-quit" class="menu-btn small">ABANDON RUN</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- death screen -->
+  <div id="death-screen" class="screen hidden">
+    <div class="menu-inner">
+      <h2 id="death-title">YOU DIED</h2>
+      <p id="death-door"></p>
+      <div id="guiding-light-box">
+        <div class="gl-orb"></div>
+        <p id="death-advice"></p>
+      </div>
+      <div class="menu-buttons">
+        <button id="btn-retry" class="menu-btn">TRY AGAIN</button>
+        <button id="btn-death-menu" class="menu-btn small">LOBBY</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- win screen -->
+  <div id="win-screen" class="screen hidden">
+    <div class="menu-inner">
+      <h2 class="win-title">DOOR 100</h2>
+      <p class="win-sub">you escaped the hotel.</p>
+      <p id="win-stats"></p>
+      <p class="win-tease">the elevator only goes down…</p>
+      <div class="menu-buttons">
+        <button id="btn-win-menu" class="menu-btn">RETURN TO LOBBY</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- shop modal -->
+  <div id="shop-modal" class="modal hidden">
+    <div class="modal-inner">
+      <h2>JEFF'S SHOP</h2>
+      <p class="shop-flavor">"take your time. nothing in here bites."</p>
+      <div id="shop-items"></div>
+      <button id="btn-shop-close" class="menu-btn small">LEAVE</button>
+    </div>
+  </div>
+
+  <!-- padlock modal (door 50) -->
+  <div id="padlock-modal" class="modal hidden">
+    <div class="modal-inner">
+      <h2>PADLOCK</h2>
+      <div id="padlock-symbols"></div>
+      <div id="padlock-digits"></div>
+      <p class="modal-hint">match the symbols to the numbers on the scraps</p>
+      <button id="btn-padlock-close" class="menu-btn small">STEP BACK</button>
+    </div>
+  </div>
+
+  <!-- breaker modal (door 100) -->
+  <div id="breaker-modal" class="modal hidden">
+    <div class="modal-inner">
+      <h2>BREAKER BOX</h2>
+      <div id="breaker-display">--</div>
+      <div id="breaker-switches"></div>
+      <p class="modal-hint">flip the breakers in the order shown. quietly.</p>
+      <button id="btn-breaker-close" class="menu-btn small">STEP BACK</button>
+    </div>
+  </div>
+</div>
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
