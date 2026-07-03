@@ -268,12 +268,25 @@ function decorate(rng, room, opts) {
     room.decor.push({ type: 'runner', x: rect.x + rect.w / 2, y: rect.y + rect.h / 2, w: rect.w > rect.h ? rect.w * 0.86 : 90, h: rect.w > rect.h ? 90 : rect.h * 0.86 });
   }
 
-  // paintings + windows on walls
-  const nPaint = rng.int(1, 3);
+  // windows — every room gets storm-facing glass on its side walls
+  const nWin = rng.int(1, 3);
+  let placedWin = 0;
+  for (let i = 0; i < 8 && placedWin < nWin; i++) {
+    const side = rng.pick(['n', 's', 'e', 'w']);
+    const vert = side === 'w' || side === 'e';
+    const s = wallSpot(room, side, rng.next(), vert ? 10 : 78, vert ? 78 : 10);
+    if (nearOpening(s, room, 40)) continue;
+    if (room.decor.some(d => d.type === 'window' && Math.hypot(d.x - s.x, d.y - s.y) < 120)) continue;
+    room.decor.push({ type: 'window', ...s, side, variant: rng.int(0, 3) });
+    placedWin++;
+  }
+
+  // paintings on the remaining wall space
+  const nPaint = rng.int(1, 2);
   for (let i = 0; i < nPaint; i++) {
     const side = rng.pick(['n', 's', 'e', 'w']);
     const s = wallSpot(room, side, rng.next(), 60, 8);
-    if (!nearOpening(s, room, 30)) room.decor.push({ type: rng.chance(0.75) ? 'painting' : 'window', ...s, side, variant: rng.int(0, 3) });
+    if (!nearOpening(s, room, 30)) room.decor.push({ type: 'painting', ...s, side, variant: rng.int(0, 3) });
   }
 
   // wardrobes — survival essentials
@@ -514,10 +527,85 @@ export function makeSeekChain(rng, startNum, entryDoor, segments = 6, existingRo
   return rooms;
 }
 
-// door 50 — the library
+// ------------------------------------------- raised platforms (library floors)
+
+// colliders that depend on which floor a body occupies. floor 0: the raised
+// terraces are solid obstacles; floor 1: railings pen the body onto the decks.
+// stair side-rails are solid on both floors, so stairs only admit bodies end-on.
+export function floorColliders(room, floor) {
+  if (!room.platforms) return [];
+  const key = floor === 1 ? '_fc1' : '_fc0';
+  if (room[key]) return room[key];
+  const out = [];
+  const R = 7;
+  for (const st of room.stairs) {
+    if (st.h >= st.w) {
+      out.push({ x: st.x - R, y: st.y, w: R, h: st.h });
+      out.push({ x: st.x + st.w, y: st.y, w: R, h: st.h });
+    } else {
+      out.push({ x: st.x, y: st.y - R, w: st.w, h: R });
+      out.push({ x: st.x, y: st.y + st.h, w: st.w, h: R });
+    }
+  }
+  if (floor === 0) {
+    for (const p of room.platforms) out.push({ x: p.x, y: p.y, w: p.w, h: p.h });
+  } else {
+    for (let i = 0; i < room.platforms.length; i++) {
+      const p = room.platforms[i];
+      const gaps = room.stairs.filter(s => s.platform === i);
+      if (p.inner === 'n' || p.inner === 's') {
+        const yy = p.inner === 's' ? p.y + p.h - R : p.y;
+        let cur = p.x;
+        for (const g of gaps.sort((a, b) => a.x - b.x)) {
+          if (g.x - 2 > cur) out.push({ x: cur, y: yy, w: g.x - 2 - cur, h: R });
+          cur = Math.max(cur, g.x + g.w + 2);
+        }
+        if (p.x + p.w > cur) out.push({ x: cur, y: yy, w: p.x + p.w - cur, h: R });
+      } else {
+        const xx = p.inner === 'e' ? p.x + p.w - R : p.x;
+        let cur = p.y;
+        for (const g of gaps.sort((a, b) => a.y - b.y)) {
+          if (g.y - 2 > cur) out.push({ x: xx, y: cur, w: R, h: g.y - 2 - cur });
+          cur = Math.max(cur, g.y + g.h + 2);
+        }
+        if (p.y + p.h > cur) out.push({ x: xx, y: cur, w: R, h: p.y + p.h - cur });
+      }
+    }
+  }
+  room[key] = out;
+  return out;
+}
+
+// which stair (if any) contains the point; t runs 0 at the low end → 1 at the top
+export function stairProgressAt(room, x, y) {
+  if (!room.stairs) return null;
+  for (const st of room.stairs) {
+    if (x >= st.x && x <= st.x + st.w && y >= st.y && y <= st.y + st.h) {
+      const dx = st.hx - st.lx, dy = st.hy - st.ly;
+      const t = ((x - st.lx) * dx + (y - st.ly) * dy) / (dx * dx + dy * dy);
+      return { stair: st, t: Math.max(0, Math.min(1, t)) };
+    }
+  }
+  return null;
+}
+
+// door 50 — the library: a two-storey cathedral of books. mezzanine decks run
+// along both side walls, joined to the grand hall below by four staircases.
 export function makeLibrary(rng, entryDoor, existingRooms = []) {
-  const w = 1050, h = 820;
-  const rect = placeSafe(rng, entryDoor, w, h, existingRooms);
+  const horiz = entryDoor.dir === 'e' || entryDoor.dir === 'w';
+  const sizes = horiz
+    ? [[2900, 2000], [2400, 1750], [1900, 1500]]
+    : [[2000, 2900], [1750, 2400], [1500, 1900]];
+  let rect = null;
+  for (const [w, h] of sizes) {
+    for (let i = 0; i < 12 && !rect; i++) {
+      const off = i === 0 ? 0.5 : rng.range(0.34, 0.66);
+      const r = fixEntryOffset(entryDoor, placeRect(entryDoor, w, h, off));
+      if (!existingRooms.some(er => overlapTol(r, er.rect))) rect = r;
+    }
+    if (rect) break;
+  }
+  if (!rect) rect = fixEntryOffset(entryDoor, placeRect(entryDoor, sizes[2][0], sizes[2][1], 0.5));
   const room = baseRoom(50, rect);
   room.entryDir = entryDoor.dir;
   room.entryDoor = entryDoor;
@@ -530,44 +618,141 @@ export function makeLibrary(rng, entryDoor, existingRooms = []) {
   exit.padlocked = true;
   exit.locked = true;
 
-  // bookshelf rows forming aisles
-  const rows = 4;
-  const shelves = [];
-  for (let r = 0; r < rows; r++) {
-    const sy = rect.y + 130 + r * ((h - 260) / (rows - 1)) - 16;
-    let sx = rect.x + 110;
-    while (sx < rect.x + w - 210) {
-      const sw = rng.int(120, 200);
-      if (rng.chance(0.8)) {
-        const f = furn('bookshelf', sx, sy, sw, 34);
+  // layout in travel coords: u runs door-to-door, v runs across the hall
+  const rx = rect.x, ry = rect.y, T = WALL_T;
+  const U = horiz ? rect.w : rect.h;
+  const V = horiz ? rect.h : rect.w;
+  const uv = (u, v, uw, vw) => horiz
+    ? { x: rx + u, y: ry + v, w: uw, h: vw }
+    : { x: rx + v, y: ry + u, w: vw, h: uw };
+  const pt = (u, v) => horiz ? { x: rx + u, y: ry + v } : { x: rx + v, y: ry + u };
+
+  const D = 300, SL = 180, SW = 96;
+  room.platforms = [
+    { ...uv(T, T, U - T * 2, D), inner: horiz ? 's' : 'e' },
+    { ...uv(T, V - T - D, U - T * 2, D), inner: horiz ? 'n' : 'w' },
+  ];
+  room.stairs = [];
+  for (const fu of [0.26, 0.74]) {
+    const u0 = U * fu;
+    const a = uv(u0 - SW / 2, T + D, SW, SL);
+    const hA = pt(u0, T + D + 8), lA = pt(u0, T + D + SL - 8);
+    room.stairs.push({ ...a, hx: hA.x, hy: hA.y, lx: lA.x, ly: lA.y, platform: 0 });
+    const b = uv(u0 - SW / 2, V - T - D - SL, SW, SL);
+    const hB = pt(u0, V - T - D - 8), lB = pt(u0, V - T - D - SL + 8);
+    room.stairs.push({ ...b, hx: hB.x, hy: hB.y, lx: lB.x, ly: lB.y, platform: 1 });
+  }
+  const clearOfStairs = (r, pad = 46) =>
+    !room.stairs.some(s => rectsOverlap({ x: r.x - pad, y: r.y - pad, w: r.w + pad * 2, h: r.h + pad * 2 }, s));
+
+  // grand hall — shelf aisles flanking a wide central corridor
+  const hallV0 = D + 44, hallV1 = V - D - 44;
+  const corridor = Math.max(330, (hallV1 - hallV0) * 0.34);
+  const band = (hallV1 - hallV0 - corridor) / 2;
+  const nRows = Math.max(1, Math.floor(band / 126));
+  const rows = [];
+  for (let i = 0; i < nRows; i++) {
+    rows.push(hallV0 + 26 + i * 126);
+    rows.push(hallV1 - 26 - 34 - i * 126);
+  }
+  const shelvesMain = [];
+  for (const vRow of rows) {
+    let u = 150;
+    while (u < U - 340) {
+      const len = rng.int(190, 330);
+      const spot = uv(u, vRow, len, 34);
+      if (rng.chance(0.85) && clearOfStairs(spot) && !nearOpening(spot, room, 110)) {
+        const f = furn('bookshelf', spot.x, spot.y, spot.w, spot.h);
         room.furniture.push(f);
-        shelves.push(f);
+        shelvesMain.push(f);
       }
-      sx += sw + rng.int(60, 130);
+      u += len + rng.int(64, 150);
     }
   }
-  // reading tables to hide under
-  for (let i = 0; i < 3; i++) {
-    const spot = { x: rect.x + 160 + i * 300 + rng.range(-30, 30), y: rect.y + h * rng.range(0.3, 0.6), w: 110, h: 76 };
-    if (!overlapsAny(spot, room.furniture)) room.furniture.push(furn('table', spot.x, spot.y, spot.w, spot.h, { hideUnder: true }));
+
+  // the heart of the hall: long rug, grand reading desk, chandeliers
+  const c = pt(U / 2, V / 2);
+  room.decor.push({ type: 'rug', x: c.x, y: c.y, w: horiz ? U * 0.55 : 250, h: horiz ? 250 : U * 0.55, tone: 2 });
+  const desk = uv(U / 2 - 150, V / 2 - 60, 300, 120);
+  room.furniture.push(furn('table', desk.x, desk.y, desk.w, desk.h, { hideUnder: true }));
+  for (const fu of [0.3, 0.7]) {
+    const l = pt(U * fu, V / 2);
+    room.lights.push({ x: l.x, y: l.y, r: 380, warm: true, fixture: 'chandelier' });
   }
-  // candles for mood
-  for (let i = 0; i < 5; i++) {
-    room.lights.push({ x: rect.x + 120 + rng.next() * (w - 240), y: rect.y + 90 + rng.next() * (h - 180), r: 120, warm: true, fixture: 'candle', flicker: true });
+  for (const fu of [0.12, 0.88]) {
+    const l = pt(U * fu, V / 2);
+    room.lights.push({ x: l.x, y: l.y, r: 240, warm: true, fixture: 'lamp' });
   }
 
-  // padlock code scraps hidden across shelves
+  // reading tables with candles, tucked into the aisle bands
+  for (const [fu, side] of [[0.18, -1], [0.42, 1], [0.58, -1], [0.82, 1]]) {
+    const spot = uv(U * fu - 55, V / 2 + side * corridor * 0.28 - 38, 110, 76);
+    if (!overlapsAny(spot, room.furniture) && clearOfStairs(spot) && !nearOpening(spot, room, 90)) {
+      room.furniture.push(furn('table', spot.x, spot.y, spot.w, spot.h, { hideUnder: true }));
+      room.lights.push({ x: spot.x + spot.w / 2, y: spot.y + spot.h / 2, r: 150, warm: true, fixture: 'candle', flicker: true });
+    }
+  }
+  // stray candles among the stacks
+  for (let i = 0; i < 6 && shelvesMain.length; i++) {
+    const s = rng.pick(shelvesMain);
+    room.lights.push({ x: s.x + rng.next() * s.w, y: s.y + s.h / 2, r: 120, warm: true, fixture: 'candle', flicker: true });
+  }
+
+  // mezzanine decks: shelves along the outer walls, candle tables, storm glass
+  const shelvesUp = [[], []];
+  for (let pi = 0; pi < 2; pi++) {
+    const vOuter = pi === 0 ? T + 10 : V - T - 40;
+    let u = 170;
+    while (u < U - 360) {
+      const len = rng.int(220, 360);
+      const spot = uv(u, vOuter, len, 30);
+      if (rng.chance(0.9)) {
+        const f = furn('bookshelf', spot.x, spot.y, spot.w, spot.h, { floor: 1 });
+        room.furniture.push(f);
+        shelvesUp[pi].push(f);
+      }
+      u += len + rng.int(70, 160);
+    }
+    for (const fu of [0.38, 0.62]) {
+      const spot = uv(U * fu - 40, pi === 0 ? T + D / 2 - 30 : V - T - D / 2 - 30, 80, 60);
+      if (clearOfStairs(spot) && !overlapsAny(spot, room.furniture)) {
+        room.furniture.push(furn('table', spot.x, spot.y, spot.w, spot.h, { hideUnder: true, floor: 1 }));
+        room.lights.push({ x: spot.x + 40, y: spot.y + 30, r: 150, warm: true, fixture: 'candle', flicker: true });
+      }
+    }
+    for (const fu of [0.2, 0.5, 0.8]) {
+      const l = pt(U * fu, pi === 0 ? T + D * 0.55 : V - T - D * 0.55);
+      room.lights.push({ x: l.x, y: l.y, r: 210, warm: true, fixture: 'candle', flicker: true });
+    }
+    const wside = pi === 0 ? (horiz ? 'n' : 'w') : (horiz ? 's' : 'e');
+    for (const frac of [0.22, 0.5, 0.78]) {
+      const vert = wside === 'w' || wside === 'e';
+      const s = wallSpot(room, wside, frac, vert ? 10 : 78, vert ? 78 : 10);
+      room.decor.push({ type: 'window', ...s, side: wside, variant: rng.int(0, 3) });
+    }
+  }
+
+  // padlock code scraps: three below, one on each deck — the climb is the price
   const symbols = ['◆', '✶', '☾', '▲', '⬟'];
   const code = [];
   for (let i = 0; i < 5; i++) code.push(rng.int(0, 9));
   room.libCode = code;
   room.libSymbols = symbols;
-  const spots = rng.shuffle(shelves).slice(0, 5);
+  const spots = [
+    ...rng.shuffle(shelvesMain).slice(0, 3),
+    ...rng.shuffle(shelvesUp[0]).slice(0, 1),
+    ...rng.shuffle(shelvesUp[1]).slice(0, 1),
+  ];
+  for (const extra of rng.shuffle(shelvesMain)) {
+    if (spots.length >= 5) break;
+    if (!spots.includes(extra)) spots.push(extra);
+  }
+  const rcx = rx + rect.w / 2, rcy = ry + rect.h / 2;
   spots.forEach((s, i) => {
-    room.items.push({
-      type: 'scrap', idx: i, symbol: symbols[i], digit: code[i], taken: false,
-      x: s.x + s.w / 2, y: s.y + s.h / 2 + 30,
-    });
+    let sx = s.x + s.w / 2, sy = s.y + s.h / 2;
+    if (s.w >= s.h) sy += 34 * (Math.sign(rcy - sy) || 1);
+    else sx += 34 * (Math.sign(rcx - sx) || 1);
+    room.items.push({ type: 'scrap', idx: i, symbol: symbols[i], digit: code[i], taken: false, x: sx, y: sy });
   });
 
   buildWalls(room);

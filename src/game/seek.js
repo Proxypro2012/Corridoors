@@ -20,56 +20,93 @@ export class SeekEntity {
 
   update(dt, game) {
     if (!this.active) return;
-    this.speed = Math.min(this.maxSpeed, this.speed + dt * 160);
     const p = game.player;
+    const d = dist(this.x, this.y, p.x, p.y);
+    // rubber-band: menacing when close, faster when the player pulls away,
+    // but always beatable at a sprint (player run > 300)
+    const want = d > 650 ? 340 : d < 180 ? 238 : this.maxSpeed;
+    this.speed = Math.min(want, this.speed + dt * 200);
     const a = angleTo(this.x, this.y, p.x, p.y);
     this.x += Math.cos(a) * this.speed * dt;
     this.y += Math.sin(a) * this.speed * dt;
 
     this.trailT -= dt;
     if (this.trailT <= 0) {
-      this.trailT = 0.05;
+      this.trailT = 0.028;
+      // black goo wake + flicking droplets
       game.particles.spawn({
-        x: this.x + (Math.random() - 0.5) * 30, y: this.y + (Math.random() - 0.5) * 30,
-        life: 1.2, size: 12, sizeEnd: 2, color: '12,12,16', drag: 0.9,
+        x: this.x + (Math.random() - 0.5) * 40, y: this.y + (Math.random() - 0.5) * 40,
+        life: 1.5, size: 16, sizeEnd: 3, color: '10,10,14', drag: 0.9,
+      });
+      game.particles.spawn({
+        x: this.x, y: this.y,
+        vx: (Math.random() - 0.5) * 180, vy: (Math.random() - 0.5) * 180,
+        life: 0.5, size: 5, sizeEnd: 0, color: '35,70,55', additive: true, drag: 0.92,
       });
     }
-    const d = dist(this.x, this.y, p.x, p.y);
-    if (d < 500) game.camera.shake(clamp((500 - d) / 120, 0, 5), 0.12);
-    if (d < 36 && !p.dead) p.damage(999, game, 'seek');
+    if (d < 500) game.camera.shake(clamp((500 - d) / 90, 0, 7), 0.12);
+    if (d < 44 && !p.dead) p.damage(999, game, 'seek');
   }
 
   draw(ctx, time, game) {
+    const p = game.player;
+    const lookA = Math.atan2(p.y - this.y, p.x - this.x);
+    // motion streaks behind the mass while at speed
+    if (this.active && this.speed > 60) {
+      ctx.strokeStyle = 'rgba(15,15,22,0.5)';
+      ctx.lineWidth = 3;
+      for (let i = 0; i < 5; i++) {
+        const off = (i - 2) * 14;
+        ctx.beginPath();
+        ctx.moveTo(this.x - Math.cos(lookA) * 40 + Math.sin(lookA) * off, this.y - Math.sin(lookA) * 40 - Math.cos(lookA) * off);
+        ctx.lineTo(this.x - Math.cos(lookA) * (95 + Math.random() * 40) + Math.sin(lookA) * off, this.y - Math.sin(lookA) * (95 + Math.random() * 40) - Math.cos(lookA) * off);
+        ctx.stroke();
+      }
+    }
     ctx.save();
     ctx.translate(this.x, this.y);
-    // writhing goo mass
+    const breathe = 1 + Math.sin(time * 7) * 0.06;
+    ctx.scale(breathe, breathe);
+    // writhing goo mass — bigger, angrier
     ctx.fillStyle = '#0b0b10';
     ctx.beginPath();
-    for (let i = 0; i <= 20; i++) {
-      const a = i / 20 * TAU;
-      const r = 30 + Math.sin(a * 3 + time * 6) * 6;
+    for (let i = 0; i <= 24; i++) {
+      const a = i / 24 * TAU;
+      const r = 38 + Math.sin(a * 3 + time * 8) * 9 + Math.sin(a * 7 - time * 5) * 4;
       const px = Math.cos(a) * r, py = Math.sin(a) * r;
       i ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
     }
     ctx.closePath(); ctx.fill();
-    // tendrils
-    ctx.strokeStyle = '#0b0b10'; ctx.lineWidth = 7; ctx.lineCap = 'round';
+    // tendrils whipping toward the player
+    ctx.strokeStyle = '#0b0b10'; ctx.lineWidth = 8; ctx.lineCap = 'round';
     for (let i = 0; i < this.tendrils.length; i++) {
-      const a = this.tendrils[i] + Math.sin(time * 4 + i) * 0.5;
+      const a = this.tendrils[i] + Math.sin(time * 5 + i * 1.7) * 0.8;
+      const reach = 58 + Math.sin(time * 9 + i * 2.3) * 18;
       ctx.beginPath();
       ctx.moveTo(0, 0);
-      ctx.quadraticCurveTo(Math.cos(a) * 32, Math.sin(a) * 32, Math.cos(a) * 52, Math.sin(a) * 52 + Math.sin(time * 8 + i) * 8);
+      ctx.quadraticCurveTo(Math.cos(a) * 34, Math.sin(a) * 34, Math.cos(a) * reach, Math.sin(a) * reach + Math.sin(time * 8 + i) * 10);
       ctx.stroke();
     }
-    // the one great eye
+    // ring of lesser eyes blinking around the mass
+    for (let i = 0; i < 6; i++) {
+      const a = i / 6 * TAU + time * 0.6;
+      const blink = Math.max(0.1, Math.sin(time * 3 + i * 2.1));
+      ctx.fillStyle = '#cfd8d6';
+      ctx.beginPath(); ctx.ellipse(Math.cos(a) * 26, Math.sin(a) * 26, 4, 4 * blink, 0, 0, TAU); ctx.fill();
+      ctx.fillStyle = '#0a0f0c';
+      ctx.beginPath(); ctx.arc(Math.cos(a) * 26, Math.sin(a) * 26, 1.6 * blink, 0, TAU); ctx.fill();
+    }
+    // the one great eye — locked onto the player
     ctx.fillStyle = '#e8f0f2';
-    ctx.beginPath(); ctx.ellipse(0, 0, 15, 18, 0, 0, TAU); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(0, 0, 17, 21, 0, 0, TAU); ctx.fill();
+    const px2 = Math.cos(lookA) * 5, py2 = Math.sin(lookA) * 5;
     ctx.fillStyle = '#274a3a';
-    ctx.beginPath(); ctx.arc(0, 0, 8, 0, TAU); ctx.fill();
+    ctx.beginPath(); ctx.arc(px2, py2, 9, 0, TAU); ctx.fill();
     ctx.fillStyle = '#060a08';
-    ctx.beginPath(); ctx.arc(0, 0, 4.5, 0, TAU); ctx.fill();
+    ctx.beginPath(); ctx.arc(px2, py2, 5, 0, TAU); ctx.fill();
     ctx.restore();
-    game.pendingGlows.push({ x: this.x, y: this.y, r: 120, color: glowColor(40, 90, 70), a: 0.3 });
+    game.pendingGlows.push({ x: this.x, y: this.y, r: 220, color: glowColor(40, 90, 70), a: 0.45 });
+    game.pendingGlows.push({ x: this.x, y: this.y, r: 70, color: glowColor(120, 200, 160), a: 0.35 });
   }
 }
 
@@ -94,7 +131,15 @@ export class SeekChase {
   }
 
   begin() {
+    // guard: main arms the chase and pings this every frame once the player
+    // crosses the corridor midpoint — only the first call may run, or the
+    // cutscene restarts forever and Seek piles up frozen at its spawn
+    if (this.state !== 'armed' && this.state !== 'cutscene') return;
+    this.state = 'forming';
     const g = this.game;
+    // the corridor belongs to Seek — any inbound Rush/Ambush yields the stage
+    g.entities = g.entities.filter(e => e.type !== 'rush' && e.type !== 'ambush');
+    g._rushImminent = false;
     this.seek = new SeekEntity(this.spawnPos.x, this.spawnPos.y);
     g.entities.push(this.seek);
     g.audio.play('seekGoo');
@@ -166,16 +211,21 @@ export class SeekChase {
       }
     }
 
-    // guiding light marks the true path
+    // guiding light marks the true path — a strong blue beacon on the door
     const room = g.currentRoom;
     if (room && room.special === 'seek') {
       const exit = room.doors.find(d => d.seekCorrect && !d.opened);
-      if (exit && Math.random() < dt * 22) {
-        g.particles.spawn({
-          x: exit.cx + (Math.random() - 0.5) * 46, y: exit.cy + (Math.random() - 0.5) * 46,
-          vx: 0, vy: -14, life: 0.9, size: 4, sizeEnd: 0,
-          color: '120,180,255', additive: true,
-        });
+      if (exit) {
+        const pulse = 0.45 + Math.sin(g.time * 5) * 0.2;
+        g.pendingGlows.push({ x: exit.cx, y: exit.cy, r: 170, color: glowColor(90, 150, 255), a: pulse });
+        g.pendingGlows.push({ x: exit.cx, y: exit.cy, r: 60, color: glowColor(190, 220, 255), a: 0.55 });
+        if (Math.random() < dt * 26) {
+          g.particles.spawn({
+            x: exit.cx + (Math.random() - 0.5) * 46, y: exit.cy + (Math.random() - 0.5) * 46,
+            vx: 0, vy: -18, life: 0.9, size: 4.5, sizeEnd: 0,
+            color: '140,190,255', additive: true,
+          });
+        }
       }
     }
 

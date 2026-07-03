@@ -63,8 +63,17 @@ the `Game` instance on `window.game`.
 ## Controls
 
 `WASD` move · mouse aims light · `Shift` sprint (loud) · `C` crouch (quiet) ·
-`E` interact · `F` toggle light · `1–5`/click hotbar · `R` use selected item ·
-`Space` heartbeat (when hiding near the Figure) · `Esc` pause.
+`E` interact · `F` toggle light (**the light source must be the selected
+hotbar item — nothing in hand means darkness**) · `1–5`/click hotbar ·
+`R` use selected item · `Space` heartbeat (when hiding near the Figure) ·
+`Esc` pause.
+
+## Dev panel
+
+`DEV` button (top-right), passcode `2012`. Skip to any door, summon any
+entity sequence (rush/ambush/eyes/screech/halt/shadow/figure/seek), +gold,
+grant all tools, heal/revive, unlock the current door, force power on, and
+clear active threats. Skipping revives out of death/win back into play.
 
 ## Conventions
 

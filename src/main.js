@@ -43,6 +43,9 @@ export class Game {
     this.rng = new RNG();
     this.time = 0;
     this.state = 'menu';            // menu | playing | paused | dead | win
+    this._dev = false; // Written by GPT Codex.
+    this._devPanel = null; // Written by GPT Codex.
+    this._gameZoom = 1.62; // Written by GPT Codex.
 
     this.rooms = [];
     this.roomChain = [];            // connected recent rooms — Rush's path
@@ -70,6 +73,7 @@ export class Game {
     this.ui.setBestRun(this.bestRun);
 
     this._bindUI();
+    this._setupDevPanel(); // Written by GPT Codex.
     this._resize();
     window.addEventListener('resize', () => this._resize());
     window.addEventListener('contextmenu', e => e.preventDefault());
@@ -112,10 +116,167 @@ export class Game {
     });
   }
 
+  _setupDevPanel() { // Written by GPT Codex.
+    const root = $('game-root'); // Written by GPT Codex.
+    const panel = document.createElement('div'); // Written by GPT Codex.
+    panel.style.cssText = 'position:absolute;top:10px;right:10px;z-index:90;display:flex;flex-direction:column;gap:6px;align-items:flex-end;font-family:monospace;pointer-events:auto;'; // Written by GPT Codex.
+    const toggle = document.createElement('button'); // Written by GPT Codex.
+    toggle.textContent = 'DEV'; // Written by GPT Codex.
+    toggle.style.cssText = 'background:#06070a;color:#7fff9e;border:1px solid #2e8f4e;border-radius:4px;padding:6px 9px;letter-spacing:2px;cursor:pointer;'; // Written by GPT Codex.
+    const controls = document.createElement('div'); // Written by GPT Codex.
+    controls.style.cssText = 'display:none;width:250px;background:rgba(5,6,9,.92);border:1px solid #2e8f4e;border-radius:6px;padding:10px;box-shadow:0 16px 40px rgba(0,0,0,.75);color:#cfeedd;'; // Written by GPT Codex.
+    const row = document.createElement('div'); // Written by GPT Codex.
+    row.style.cssText = 'display:flex;gap:6px;margin-bottom:8px;'; // Written by GPT Codex.
+    const doorInput = document.createElement('input'); // Written by GPT Codex.
+    doorInput.type = 'number'; // Written by GPT Codex.
+    doorInput.min = '0'; // Written by GPT Codex.
+    doorInput.max = '100'; // Written by GPT Codex.
+    doorInput.value = '1'; // Written by GPT Codex.
+    doorInput.style.cssText = 'min-width:0;flex:1;background:#11151a;color:#e8fff1;border:1px solid #31483a;border-radius:4px;padding:6px;'; // Written by GPT Codex.
+    const makeButton = (text, fn) => { // Written by GPT Codex.
+      const button = document.createElement('button'); // Written by GPT Codex.
+      button.textContent = text; // Written by GPT Codex.
+      button.style.cssText = 'background:#151a20;color:#e8fff1;border:1px solid #31483a;border-radius:4px;padding:6px;cursor:pointer;text-align:left;'; // Written by GPT Codex.
+      button.onclick = fn; // Written by GPT Codex.
+      return button; // Written by GPT Codex.
+    }; // Written by GPT Codex.
+    row.append(doorInput, makeButton('GO', () => this._devSkipToDoor(+doorInput.value || 0))); // Written by GPT Codex.
+    const summon = document.createElement('select'); // Written by GPT Codex.
+    summon.style.cssText = 'width:100%;margin-bottom:6px;background:#11151a;color:#e8fff1;border:1px solid #31483a;border-radius:4px;padding:6px;'; // Written by GPT Codex.
+    for (const name of ['rush', 'ambush', 'eyes', 'screech', 'halt', 'shadow', 'figure', 'seek']) summon.add(new Option(name.toUpperCase(), name)); // Written by GPT Codex.
+    controls.append(row, summon); // Written by GPT Codex.
+    controls.append(makeButton('SUMMON SEQUENCE', () => this._devSummon(summon.value))); // Written by GPT Codex.
+    controls.append(makeButton('+250 GOLD', () => this._devGold(250))); // Written by GPT Codex.
+    controls.append(makeButton('ALL TOOLS', () => this._devTools())); // Written by GPT Codex.
+    controls.append(makeButton('HEAL / REVIVE', () => this._devHeal())); // Written by GPT Codex.
+    controls.append(makeButton('UNLOCK CURRENT DOOR', () => this._devUnlockDoor())); // Written by GPT Codex.
+    controls.append(makeButton('POWER ON', () => this._devPowerOn())); // Written by GPT Codex.
+    controls.append(makeButton('CLEAR THREATS', () => this._devClearThreats())); // Written by GPT Codex.
+    for (const child of controls.children) child.style.marginTop = child === row || child === summon ? child.style.marginTop : '6px'; // Written by GPT Codex.
+    toggle.onclick = () => { // Written by GPT Codex.
+      if (!this._dev && window.prompt('DEV passcode') !== '2012') return; // Written by GPT Codex.
+      this._dev = true; // Written by GPT Codex.
+      controls.style.display = controls.style.display === 'none' ? 'block' : 'none'; // Written by GPT Codex.
+      toggle.style.boxShadow = '0 0 18px rgba(127,255,158,.45)'; // Written by GPT Codex.
+    }; // Written by GPT Codex.
+    panel.append(toggle, controls); // Written by GPT Codex.
+    root.appendChild(panel); // Written by GPT Codex.
+    this._devPanel = { panel, toggle, controls, doorInput, summon }; // Written by GPT Codex.
+  } // Written by GPT Codex.
+
+  _devSkipToDoor(rawTarget) { // Written by GPT Codex.
+    if (!this.player || !this.currentRoom) return; // Written by GPT Codex.
+    const target = clamp(Math.floor(rawTarget), 0, 100); // Written by GPT Codex.
+    this.cutscene = null; // Written by GPT Codex.
+    this.player.freeze = false; // Written by GPT Codex.
+    this._rushImminent = false; // Written by GPT Codex.
+    this.entities = []; // Written by GPT Codex.
+    if (target < this.currentRoom.num) this.currentRoom = this.rooms[0]; // Written by GPT Codex.
+    let guard = 0; // Written by GPT Codex.
+    while (this.currentRoom.num < target && guard++ < 140) { // Written by GPT Codex.
+      const door = this.currentRoom.doors.find(d => d.kind === 'next'); // Written by GPT Codex.
+      if (!door) break; // Written by GPT Codex.
+      door.locked = false; // Written by GPT Codex.
+      door.padlocked = false; // Written by GPT Codex.
+      if (!door.toRoom) this._generateRoom(door.num, door); // Written by GPT Codex.
+      door.opened = true; // Written by GPT Codex.
+      this.currentRoom = door.toRoom; // Written by GPT Codex.
+      if (this.currentRoom.num < target) this.currentRoom.visited = true; // Written by GPT Codex.
+    } // Written by GPT Codex.
+    const room = this.rooms.find(r => r.num === target) || this.currentRoom; // Written by GPT Codex.
+    if (!room) return; // Written by GPT Codex.
+    this.seekChase = room.special === 'seek' ? this.seekChase : null; // Written by GPT Codex.
+    // revive out of any terminal state so the jump always lands playable
+    this.state = 'playing';
+    this.ui.screen('none');
+    this.ui.showHUD(true);
+    this.ui.setHealthVignette(1);
+    this.player.dead = false; // Written by GPT Codex.
+    this.player.health = this.player.maxHealth; // Written by GPT Codex.
+    this.player.hiddenIn = null; // Written by GPT Codex.
+    this.player.x = room.rect.x + room.rect.w / 2; // Written by GPT Codex.
+    this.player.y = room.rect.y + room.rect.h / 2; // Written by GPT Codex.
+    this.player.floor = 0;
+    this.currentRoom = room; // Written by GPT Codex.
+    room.visited = false; // Written by GPT Codex.
+    this._onEnterRoom(room); // Written by GPT Codex.
+    this.camera.snapTo(this.player.x, this.player.y, this._gameZoom); // Written by GPT Codex.
+    this.camera.follow = this.player; // Written by GPT Codex.
+    this.ui.subtitle(`DEV: jumped to door ${String(room.num).padStart(3, '0')}`, 1.8); // Written by GPT Codex.
+  } // Written by GPT Codex.
+
+  _devSummon(type) { // Written by GPT Codex.
+    if (!this.currentRoom) return; // Written by GPT Codex.
+    if (type === 'rush' || type === 'ambush') { this.triggerRush(type); return; } // Written by GPT Codex.
+    if (type === 'eyes') this.entities.push(new Eyes(this.currentRoom, this.rng)); // Written by GPT Codex.
+    else if (type === 'screech') this.entities.push(new Screech(this.currentRoom, this.rng)); // Written by GPT Codex.
+    else if (type === 'halt') this.entities.push(new Halt(this.currentRoom, this)); // Written by GPT Codex.
+    else if (type === 'shadow') this.entities.push(new Shadow(this.currentRoom, this.rng)); // Written by GPT Codex.
+    else if (type === 'figure') { this.figure = new Figure(this.currentRoom, this); this.entities.push(this.figure); } // Written by GPT Codex.
+    else if (type === 'seek') { // Written by GPT Codex.
+      const door = this.currentRoom.doors.find(d => d.kind === 'next'); // Written by GPT Codex.
+      if (!door) return; // Written by GPT Codex.
+      door.locked = false; // Written by GPT Codex.
+      door.padlocked = false; // Written by GPT Codex.
+      door.opened = true; // Written by GPT Codex.
+      const room = this._beginSeek(door.num, door); // Written by GPT Codex.
+      this.player.x = room.entryDoor.cx + DIRS[room.entryDir].dx * 80; // Written by GPT Codex.
+      this.player.y = room.entryDoor.cy + DIRS[room.entryDir].dy * 80; // Written by GPT Codex.
+      room.visited = false; // Written by GPT Codex.
+      this._onEnterRoom(room); // Written by GPT Codex.
+      this.currentRoom = room; // Written by GPT Codex.
+      this.camera.snapTo(this.player.x, this.player.y, this._gameZoom); // Written by GPT Codex.
+    } // Written by GPT Codex.
+    this.ui.subtitle(`DEV: summoned ${type}`, 1.8); // Written by GPT Codex.
+  } // Written by GPT Codex.
+
+  _devGold(amount) { // Written by GPT Codex.
+    if (!this.inventory) return; // Written by GPT Codex.
+    this.inventory.add('gold', { amount }); // Written by GPT Codex.
+    this.ui.renderHotbar(this.inventory); // Written by GPT Codex.
+  } // Written by GPT Codex.
+
+  _devTools() { // Written by GPT Codex.
+    if (!this.inventory) return; // Written by GPT Codex.
+    this.inventory.max = Math.max(this.inventory.max, 8); // Written by GPT Codex.
+    for (const id of ['lighter', 'flashlight', 'lockpick', 'vitamins', 'bandage', 'crucifix']) this.inventory.add(id); // Written by GPT Codex.
+    this.ui.renderHotbar(this.inventory); // Written by GPT Codex.
+  } // Written by GPT Codex.
+
+  _devHeal() { // Written by GPT Codex.
+    if (!this.player) return; // Written by GPT Codex.
+    this.player.dead = false; // Written by GPT Codex.
+    this.player.health = this.player.maxHealth; // Written by GPT Codex.
+    this.state = 'playing'; // Written by GPT Codex.
+    this.ui.screen('none'); // Written by GPT Codex.
+    this.ui.setHealthVignette(1); // Written by GPT Codex.
+  } // Written by GPT Codex.
+
+  _devUnlockDoor() { // Written by GPT Codex.
+    const door = this.currentRoom && this.currentRoom.doors.find(d => d.kind === 'next'); // Written by GPT Codex.
+    if (!door) return; // Written by GPT Codex.
+    door.locked = false; // Written by GPT Codex.
+    door.padlocked = false; // Written by GPT Codex.
+    this.ui.subtitle('DEV: current door unlocked', 1.5); // Written by GPT Codex.
+  } // Written by GPT Codex.
+
+  _devPowerOn() { // Written by GPT Codex.
+    this.powerOn = true; // Written by GPT Codex.
+    if (this.breakerPuzzle) this.breakerPuzzle.solved = true; // Written by GPT Codex.
+    this.ui.setObjective('Reach the elevator.'); // Written by GPT Codex.
+  } // Written by GPT Codex.
+
+  _devClearThreats() { // Written by GPT Codex.
+    this._rushImminent = false; // Written by GPT Codex.
+    this.entities = this.entities.filter(e => e.type === 'figure' && this.currentRoom && e.room === this.currentRoom); // Written by GPT Codex.
+    this.ui.subtitle('DEV: threats cleared', 1.5); // Written by GPT Codex.
+  } // Written by GPT Codex.
+
   _toMenu() {
     this.state = 'menu';
     this.audio.setMusic('none');
     this.audio.setRain(false);
+    this.audio.setThreatLoop(0);
     this.ui.closeModals();
     this.ui.showHUD(false);
     this.ui.screen('menu');
@@ -138,10 +299,15 @@ export class Game {
     this.seekChase = null;
     this.powerOn = false;
     this.lightning = 0;
+    this.lightningT = 6; // Written by GPT Codex.
     this.lastEvent = { rush: -99, ambush: -99, eyes: -99, screech: -99 };
+    this.libPuzzle = null; // Written by GPT Codex.
+    this.breakerPuzzle = null; // Written by GPT Codex.
     this.hinted = new Set();
     this.furthestDoor = 0;
     this.idleT = 0;
+    this._lastLockedDoor = 0; // Written by GPT Codex.
+    this._interactTarget = null; // Written by GPT Codex.
     this._timothyDone = false;
     this._jackDone = false;
     this._hidePressure = 0;
@@ -166,8 +332,8 @@ export class Game {
     this.player.lightOn = true;
     this.inventory.add('lighter');          // starting light source
 
-    this.camera.snapTo(this.player.x, this.player.y, 1.45);
-    this.camera.targetZoom = 1.45;
+    this.camera.snapTo(this.player.x, this.player.y, this._gameZoom);
+    this.camera.targetZoom = this._gameZoom;
     this.camera.follow = this.player;
 
     this.ui.showHUD(true);
@@ -199,11 +365,12 @@ export class Game {
       { do: () => { this.audio.play('elevatorDing'); this.ui.subtitle('the doors open.', 2); }, wait: 1.6 },
       { do: () => { this._lobbyElevOpen = 1; this.ui.fade(false); }, wait: 0.4 },
       { do: () => { this.audio.play('doorOpen'); }, wait: 1.8 },
-      { do: () => { this.camera.tweenTo(0, 0, 1.45, 2.2); }, wait: 2.4 },
+      { do: () => { this.camera.tweenTo(0, 0, this._gameZoom, 2.2); }, wait: 2.4 },
       { do: () => {
           this.ui.letterbox(false);
           this.player.freeze = false;
           this.camera.follow = this.player;
+          this.camera.targetZoom = this._gameZoom;   // snapTo(1.9) overwrote it
           this.setMusicSafe('lobby');
           this.ui.setObjective('Open the door. Survive the hotel.');
         }, wait: 0 },
@@ -300,6 +467,10 @@ export class Game {
     if (best !== this.currentRoom) this._onEnterRoom(best);
     this.currentRoom = best;
     if (best) this.furthestDoor = Math.max(this.furthestDoor, best.num);
+    // the grand library reads better a step farther out
+    if (!this.cutscene) {
+      this.camera.targetZoom = (best && best.special === 'library') ? 1.3 : this._gameZoom;
+    }
     // decay light flicker across the hotel
     for (const room of this.rooms) if (room.flicker > 0) room.flicker = Math.max(0, room.flicker - dt);
   }
@@ -308,6 +479,8 @@ export class Game {
     const first = !room.visited;
     room.visited = true;
     this.currentRoom = room;
+    if (!room.platforms) this.player.floor = 0;
+    this.ui.hideScrapNote();
     this.roomChain.push(room);
     if (this.roomChain.length > 8) this.roomChain.shift();
     this.ui.setDoor(room.num);
@@ -550,7 +723,14 @@ export class Game {
     if (best) {
       this.ui.prompt(best.text);
       if (this.input.pressed('KeyE')) best.act();
-    } else this.ui.prompt(null);
+    } else {
+      // nothing in reach — with the scraps in hand, E reads them
+      const held = this.inventory.selectedItem;
+      if (held && held.id === 'scrap') {
+        this.ui.prompt('Read scraps');
+        if (this.input.pressed('KeyE')) this.ui.toggleScrapNote(this);
+      } else this.ui.prompt(null);
+    }
   }
 
   openDoor(door) {
@@ -615,6 +795,7 @@ export class Game {
   }
 
   _hideIn(f) {
+    this.ui.hideScrapNote();
     if (this.rng.chance(0.04) && !this._jackDone) {
       this._jackDone = true;
       this.ui.jumpscare('jack', 0.6);
@@ -694,11 +875,17 @@ export class Game {
       this.audio.play('pickup'); this.ui.renderHotbar(this.inventory);
     } else if (s.id === 'crucifix') {
       this.ui.subtitle('the crucifix will smite the next thing that touches you.', 2.5);
+    } else if (s.id === 'scrap') {
+      this.ui.toggleScrapNote(this);
     }
   }
 
   _toggleLight() {
-    if (!this.inventory.has('flashlight') && !this.inventory.has('lighter')) return;
+    const held = this.inventory.selectedItem;
+    if (!held || (held.id !== 'flashlight' && held.id !== 'lighter')) {
+      this.ui.subtitle('hold a light in your hand first (1–5).', 1.6);
+      return;
+    }
     this.player.lightOn = !this.player.lightOn;
     this.audio.play('flashlight');
   }
@@ -735,23 +922,33 @@ export class Game {
   }
 
   _updateWindows(dt) {
+    // the Window entity only ever appears inside a lightning flash — handled
+    // in _updateLightning; here we just make sure stale silhouettes clear
     const room = this.currentRoom; if (!room) return;
-    for (const d of room.decor) {
-      if (d.type !== 'window') continue;
-      if (Math.random() < dt * 0.04) d.showFigure = !d.showFigure;
+    if (this.lightning <= 0) {
+      for (const d of room.decor) if (d.type === 'window' && d.showFigure && !d._figureHold) d.showFigure = false;
     }
   }
 
   _updateLightning(dt) {
     if (this.lightning > 0) this.lightning = Math.max(0, this.lightning - dt * 2);
     const room = this.currentRoom;
-    if (room && room.special === 'courtyard') {
-      this.lightningT -= dt;
-      if (this.lightningT <= 0) {
-        this.lightningT = 5 + Math.random() * 8;
-        this.lightning = 1;
-        this.audio.play('thunder');
-        this.camera.shake(3, 0.5);
+    if (!room) return;
+    const windows = room.decor.filter(d => d.type === 'window');
+    const outside = room.special === 'courtyard';
+    if (!outside && !windows.length) return;
+    this.lightningT -= dt;
+    if (this.lightningT <= 0) {
+      this.lightningT = outside ? 5 + Math.random() * 8 : 9 + Math.random() * 14;
+      this.lightning = 1;
+      this.audio.play('thunder', { vol: outside ? 1 : 0.65 });
+      this.camera.shake(outside ? 3 : 2, 0.5);
+      this._fxFlash([200, 215, 255], outside ? 0.3 : 0.2);
+      // rarely, the flash reveals something standing at the glass
+      if (windows.length && Math.random() < 0.22) {
+        const w = this.rng.pick(windows);
+        w.showFigure = true; w._figureHold = true;
+        this.schedule(1.1, () => { w.showFigure = false; w._figureHold = false; });
       }
     }
   }
@@ -774,13 +971,13 @@ export class Game {
     const haltAttack = this.entities.some(e => e.type === 'halt' && e.state === 'attack');
     if (this.figure && this.figure.state === 'chase') { tgt = 0.55; col = [150, 20, 30]; }
     else if (this.figureNear) { tgt = 0.3; col = [120, 20, 30]; }
-    if (ambushHere) { tgt = Math.max(tgt, 0.6); col = [40, 190, 95]; }
-    if (rushHere) { tgt = Math.max(tgt, 0.75); col = [30, 10, 12]; }
-    // EYES — much scarier: heavy purple drowning + static + pulse
-    if (eyesHere) { tgt = Math.max(tgt, 0.85); col = [120, 35, 190]; }
-    if (haltAttack) { tgt = Math.max(tgt, 0.55); col = [40, 90, 200]; }
-    // SEEK — 10x: violent red wash, max static, sustained shake
-    if (this.seekChase && this.seekChase.state === 'chase') { tgt = 0.95; col = [140, 25, 25]; }
+    if (ambushHere) { tgt = Math.max(tgt, 0.55); col = [40, 190, 95]; }
+    if (rushHere) { tgt = Math.max(tgt, 0.65); col = [30, 10, 12]; }
+    // EYES — heavy purple drowning + static + pulse
+    if (eyesHere) { tgt = Math.max(tgt, 0.6); col = [120, 35, 190]; }
+    if (haltAttack) { tgt = Math.max(tgt, 0.5); col = [40, 90, 200]; }
+    // SEEK — violent red wash at the edges, but the corridor stays readable
+    if (this.seekChase && this.seekChase.state === 'chase') { tgt = Math.max(tgt, 0.62); col = [140, 25, 25]; }
     f.edge += (tgt - f.edge) * clamp(dt * 4, 0, 1);
     if (tgt > 0) f.edgeCol = col;
 
@@ -793,20 +990,20 @@ export class Game {
       if (Math.random() < dt * 6) f.flash = Math.max(f.flash, 0.18);
     }
     if (rushHere || ambushHere) {
-      f.noise = Math.max(f.noise, 0.6);
-      f.darken = Math.max(f.darken, 0.7);
+      f.noise = Math.max(f.noise, 0.55);
+      f.darken = Math.max(f.darken, 0.55);
       f.shake = Math.max(f.shake, 0.7);
     }
     if (eyesHere) {
-      f.noise = Math.max(f.noise, 0.5);
-      f.darken = Math.max(f.darken, 0.6);
-      if (Math.random() < dt * 4) f.flash = Math.max(f.flash, 0.22);
+      f.noise = Math.max(f.noise, 0.3);
+      f.darken = Math.max(f.darken, 0.35);
+      if (Math.random() < dt * 3) f.flash = Math.max(f.flash, 0.18);
     }
     if (this.seekChase && this.seekChase.state === 'chase') {
-      f.noise = Math.max(f.noise, 0.75);
-      f.darken = Math.max(f.darken, 0.85);
-      f.shake = Math.max(f.shake, 1.0);
-      if (Math.random() < dt * 8) f.flash = Math.max(f.flash, 0.4);
+      f.noise = Math.max(f.noise, 0.4);
+      f.darken = Math.max(f.darken, 0.35);
+      f.shake = Math.max(f.shake, 0.6);
+      if (Math.random() < dt * 2.5) f.flash = Math.max(f.flash, 0.16);
     }
   }
 
@@ -820,10 +1017,12 @@ export class Game {
     // pulsing dread vignette + entity edge tint
     if (f.edge > 0.01 || f.darken > 0.01) {
       const pulse = 0.82 + Math.sin(t * (this.figureNear ? 9 : 4)) * 0.18;
-      const a = Math.min(0.92, (f.edge * 0.7 + f.darken * 0.5) * pulse);
+      const a = Math.min(0.68, (f.edge * 0.55 + f.darken * 0.35) * pulse);
       const [r, g, b] = f.edgeCol;
-      const grd = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.18, W / 2, H / 2, Math.max(W, H) * 0.75);
+      // wide clear center so the action stays readable under the wash
+      const grd = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.32, W / 2, H / 2, Math.max(W, H) * 0.8);
       grd.addColorStop(0, 'rgba(0,0,0,0)');
+      grd.addColorStop(0.55, `rgba(${r},${g},${b},${(a * 0.45).toFixed(3)})`);
       grd.addColorStop(1, `rgba(${r},${g},${b},${a.toFixed(3)})`);
       ctx.fillStyle = grd;
       ctx.fillRect(0, 0, W, H);
@@ -918,6 +1117,8 @@ export class Game {
     const ez = room.elevatorZone;
     if (ez && rectContains(ez, this.player.x, this.player.y)) {
       this.state = 'win';
+      this.audio.setThreatLoop(0);
+      this.audio.fadeMusic(0.55, 1);
       this.setMusicSafe('elevator');
       this.audio.play('elevatorDing');
       this.schedule(0.6, () => this.audio.play('elevatorRumble'));
@@ -1005,6 +1206,8 @@ export class Game {
     if (this.state === 'dead') return;
     this.state = 'dead';
     this.setMusicSafe('guiding');
+    this.audio.setThreatLoop(0);
+    this.audio.fadeMusic(0.55, 1.5);
     if (LETHAL_FACES.has(source)) this.ui.jumpscare(source, 1.0);
     this.audio.play('jumpscare', { vol: 0.7 });
     // blinding white-out + static + max shake as the screen tears
@@ -1136,16 +1339,18 @@ export class Game {
         }
       }
     }
-    // the player has NO intrinsic light — only what they're holding.
-    // spawn with a lighter (held + lit) so you can see, but turn it off (F)
-    // or lose it and you're blind in the dark.
-    if (p.lightOn) {
-      if (this.inventory.has('flashlight')) {
+    // the player has NO intrinsic light — only what is in their HAND.
+    // the selected hotbar slot is the held item; a flashlight or lighter in
+    // the bag does nothing until it's actually equipped.
+    const held = this.inventory.selectedItem;
+    if (p.lightOn && held) {
+      if (held.id === 'flashlight') {
         L.addCone(p.x, p.y, p.facing, 0.62, 430, 1.0);
         L.addLight(p.x, p.y, 70, 0.7);
-      } else if (this.inventory.has('lighter')) {
-        L.addGlow(p.x, p.y, 175, glowColor(255, 170, 70), 0.55);
-        L.addLight(p.x, p.y, 150, 0.55);
+      } else if (held.id === 'lighter') {
+        const flick = 0.5 + Math.sin(this.time * 11) * 0.04 + Math.random() * 0.03;
+        L.addGlow(p.x, p.y, 175, glowColor(255, 170, 70), flick);
+        L.addLight(p.x, p.y, 150, flick);
       }
     }
   }
@@ -1173,6 +1378,28 @@ export class Game {
     const threat = this._threatActive();
     const target = threat ? 0.04 : 0.55;
     if (threat !== this._musicDucked) { this._musicDucked = threat; this.audio.fadeMusic(target, threat ? 1.2 : 2.5); }
+
+    // the threat riser — one continuous pressure tone driven by whatever is
+    // closest to killing you right now. computed centrally every frame so it
+    // always decays to silence when the danger is gone.
+    let riser = 0;
+    if (this.state === 'playing' && this.player && !this.player.dead) {
+      if (this._rushImminent) riser = 0.35 + Math.sin(this.time * 6) * 0.06;
+      for (const e of this.entities) {
+        if (e.type === 'rush' || e.type === 'ambush') {
+          const d = dist(e.x, e.y, this.player.x, this.player.y);
+          riser = Math.max(riser, clamp(1 - d / 1100, 0, 1));
+        } else if (e.type === 'seek' && e.active) {
+          const d = dist(e.x, e.y, this.player.x, this.player.y);
+          riser = Math.max(riser, clamp(1 - d / 800, 0, 1) * 0.85);
+        }
+      }
+      if (this.figure && this.figure.state === 'chase') {
+        const d = dist(this.figure.x, this.figure.y, this.player.x, this.player.y);
+        riser = Math.max(riser, clamp(1 - d / 600, 0, 1) * 0.6);
+      }
+    }
+    this.audio.setThreatLoop(riser);
   }
 
   _drawNPCs(ctx) {

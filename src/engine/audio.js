@@ -327,6 +327,36 @@ export class AudioSys {
     const rf = ctx.createBiquadFilter(); rf.type = 'highpass'; rf.frequency.value = 1800;
     rs.connect(rf); rf.connect(rg); rs.start();
     this._rainGain = rg;
+
+    // threat riser — a continuous dissonant scream-drone that swells as
+    // Rush/Ambush close in. driven every frame by setThreatLoop(0..1).
+    const tg = ctx.createGain(); tg.gain.value = 0; tg.connect(this.sfxBus);
+    const tf = ctx.createBiquadFilter(); tf.type = 'bandpass'; tf.frequency.value = 220; tf.Q.value = 1.1;
+    tf.connect(tg);
+    [58, 61.5, 87.3].forEach(fr => {
+      const o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.value = fr;
+      o.connect(tf); o.start();
+    });
+    const tn = ctx.createBufferSource(); tn.buffer = this.noiseBuf; tn.loop = true;
+    tn.playbackRate.value = 0.6;
+    const tnf = ctx.createBiquadFilter(); tnf.type = 'lowpass'; tnf.frequency.value = 500;
+    tn.connect(tnf); tnf.connect(tg); tn.start();
+    const tlfo = ctx.createOscillator(); tlfo.frequency.value = 5.5;
+    const tlfoG = ctx.createGain(); tlfoG.gain.value = 0;
+    tlfo.connect(tlfoG); tlfoG.connect(tg.gain); tlfo.start();
+    this._threat = { gain: tg, filter: tf, lfoDepth: tlfoG, lfo: tlfo };
+  }
+
+  // 0 = silent · 1 = the thing is on top of you. rises in pitch, volume and
+  // tremolo speed together so the pressure physically climbs.
+  setThreatLoop(level) {
+    if (!this._threat) return;
+    const t = this.ctx.currentTime;
+    const l = Math.max(0, Math.min(1, level));
+    this._threat.gain.gain.setTargetAtTime(l * 0.42, t, 0.08);
+    this._threat.filter.frequency.setTargetAtTime(180 + l * l * 2400, t, 0.1);
+    this._threat.lfoDepth.gain.setTargetAtTime(l * 0.18, t, 0.1);
+    this._threat.lfo.frequency.setTargetAtTime(3 + l * 11, t, 0.15);
   }
 
   setRain(on) {

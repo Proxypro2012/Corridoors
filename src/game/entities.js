@@ -4,16 +4,26 @@
 import { TAU, dist, clamp, angDiff, rectContains } from '../engine/math.js';
 import { glowColor } from '../engine/lighting.js';
 
-// build a waypoint path through the alive room chain: entry → center → exit
+// build a waypoint path through the last few rooms in DOOR ORDER (not visit
+// order — backtracking players would zigzag the path otherwise): the hotel's
+// numbered rooms are spatially contiguous, so entry → center → exit through
+// ascending numbers always sweeps forward.
 function roomChainPath(game) {
+  let maxNum = 0;
+  for (const r of game.rooms) {
+    if ((r.visited || (r.entryDoor && r.entryDoor.opened)) && r.num > maxNum) maxNum = r.num;
+  }
+  const rooms = game.rooms
+    .filter(r => r.num <= maxNum && r.num >= maxNum - 5)
+    .sort((a, b) => a.num - b.num);
   const pts = [];
-  for (const room of game.roomChain) {
+  for (const room of rooms) {
     if (room.entryDoor) pts.push({ x: room.entryDoor.cx, y: room.entryDoor.cy });
     pts.push({ x: room.rect.x + room.rect.w / 2, y: room.rect.y + room.rect.h / 2 });
     const exit = room.doors.find(d => d.kind === 'next');
     if (exit) pts.push({ x: exit.cx, y: exit.cy });
   }
-  return pts;
+  return pts.length ? pts : [{ x: game.player.x, y: game.player.y - 400 }, { x: game.player.x, y: game.player.y + 400 }];
 }
 
 // ---------------------------------------------------------------- RUSH
@@ -29,7 +39,7 @@ export class Rush {
     this.bounces = opts.bounces ?? 0;      // ambush reverses
     this.dir = 1;
     this.done = false;
-    this.killR = 46;
+    this.killR = 80;                       // it doesn't need to touch you
     this.warmup = opts.warmup ?? 0;        // delay before moving
     this.trail = [];
   }
@@ -67,13 +77,23 @@ export class Rush {
     for (const tr of this.trail) tr.t -= dt;
     while (this.trail.length && this.trail[0].t <= 0) this.trail.shift();
 
-    // break lights in the room we're inside
+    // break lights in the room we're inside — total, violent blackout
     for (const room of game.rooms) {
       if (rectContains(room.rect, this.x, this.y) && !room.lightsBroken) {
         room.lightsBroken = true;
+        room.ambient = Math.max(room.ambient, 0.96);
         room.flicker = 0;
         game.audio.playAt('shatter', this.x, this.y);
-        game.particles.burst(this.x, this.y, 12, { color: '255,240,190', speed: 140, life: 0.6, size: 3, additive: true });
+        game.audio.playAt('chandelier', this.x, this.y, 1100);
+        game.camera.shake(9, 0.45);
+        game._fxFlash(this.type === 'ambush' ? [60, 200, 110] : [235, 220, 190], 0.45);
+        game._fxNoise(0.35);
+        // every fixture bursts into sparks + falling glass
+        for (const l of room.lights) {
+          game.particles.burst(l.x, l.y, 16, { color: '255,240,190', speed: 220, life: 0.7, size: 3.5, additive: true, grav: 260 });
+          game.particles.burst(l.x, l.y, 10, { color: '190,200,220', speed: 150, life: 1.0, size: 2.5, grav: 380, square: true });
+        }
+        game.particles.burst(this.x, this.y, 22, { color: '255,240,190', speed: 200, life: 0.7, size: 3, additive: true });
       }
     }
 
@@ -159,18 +179,48 @@ export class Eyes {
   }
 
   draw(ctx, time, game) {
+    const p = game.player;
+    const lookA = Math.atan2(p.y - this.y, p.x - this.x);
+    const hot = this.beingLooked;
+    // inky drips bleeding off the cluster
+    if (Math.random() < 0.3) {
+      game.particles.spawn({
+        x: this.x + (Math.random() - 0.5) * 50, y: this.y + (Math.random() - 0.5) * 40,
+        vy: 40 + Math.random() * 50, life: 1.1, size: 4, sizeEnd: 0.5, color: '25,10,40', drag: 1,
+      });
+    }
     ctx.save();
     ctx.translate(this.x, this.y);
+    const throb = 1 + Math.sin(time * (hot ? 16 : 5)) * (hot ? 0.12 : 0.04);
+    ctx.scale(throb, throb);
+    // black halo mass behind the eyes
+    ctx.fillStyle = 'rgba(12,6,20,0.85)';
+    ctx.beginPath(); ctx.ellipse(0, 0, 46, 38, 0, 0, TAU); ctx.fill();
+    // orbiting outer eyes
+    for (let i = 0; i < 7; i++) {
+      const a = i / 7 * TAU + time * 0.9;
+      const ox = Math.cos(a) * 40, oy = Math.sin(a) * 32;
+      const blink = clamp(Math.sin(time * 2.6 + i * 1.9) * 1.5 + 0.8, 0.1, 1);
+      ctx.fillStyle = hot ? '#ffd9de' : '#e8dff8';
+      ctx.beginPath(); ctx.ellipse(ox, oy, 4.5, 4.5 * blink, 0, 0, TAU); ctx.fill();
+      ctx.fillStyle = hot ? '#a01828' : '#5b2a8f';
+      ctx.beginPath(); ctx.arc(ox + Math.cos(lookA) * 1.5, oy + Math.sin(lookA) * 1.5, 2 * blink, 0, TAU); ctx.fill();
+    }
+    // core cluster — every pupil tracks the player
     for (const e of this.eyes) {
       const blink = clamp(Math.sin(time * 2 + e.ph) * 1.5 + 0.8, 0.15, 1);
-      ctx.fillStyle = '#f4f0ff';
+      ctx.fillStyle = hot ? '#ffe8ec' : '#f4f0ff';
       ctx.beginPath(); ctx.ellipse(e.ox, e.oy, e.s, e.s * blink, 0, 0, TAU); ctx.fill();
-      ctx.fillStyle = '#5b2a8f';
-      ctx.beginPath(); ctx.arc(e.ox, e.oy, e.s * 0.45 * blink, 0, TAU); ctx.fill();
+      ctx.fillStyle = hot ? '#c01230' : '#5b2a8f';
+      const pdx = Math.cos(lookA) * e.s * 0.3, pdy = Math.sin(lookA) * e.s * 0.3;
+      ctx.beginPath(); ctx.arc(e.ox + pdx, e.oy + pdy, e.s * 0.45 * blink, 0, TAU); ctx.fill();
+      ctx.fillStyle = '#0a0510';
+      ctx.beginPath(); ctx.arc(e.ox + pdx, e.oy + pdy, e.s * 0.2 * blink, 0, TAU); ctx.fill();
     }
     ctx.restore();
-    game.pendingGlows.push({ x: this.x, y: this.y, r: 190, color: glowColor(140, 80, 220), a: 0.4 });
-    game.pendingGlows.push({ x: this.x, y: this.y, r: 60, color: glowColor(220, 190, 255), a: 0.5 });
+    const pulse = hot ? 0.75 + Math.sin(time * 18) * 0.25 : 0.4;
+    game.pendingGlows.push({ x: this.x, y: this.y, r: hot ? 300 : 190, color: hot ? glowColor(220, 40, 90) : glowColor(140, 80, 220), a: pulse });
+    game.pendingGlows.push({ x: this.x, y: this.y, r: 70, color: glowColor(220, 190, 255), a: 0.5 });
   }
 }
 

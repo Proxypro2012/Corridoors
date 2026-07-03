@@ -24,6 +24,7 @@ export class UI {
       breaker: $('breaker-modal'), brDisplay: $('breaker-display'), brSwitches: $('breaker-switches'),
       heartbeat: $('heartbeat-ui'), hbMarker: $('hb-marker'), hbZone: $('hb-zone'),
       guidingHint: $('guiding-hint'),
+      scrapNote: $('scrap-note'), plLegend: $('padlock-legend'),
       lbTop: $('letterbox-top'), lbBottom: $('letterbox-bottom'),
     };
     this.subtitleT = 0;
@@ -131,6 +132,7 @@ export class UI {
   jumpscare(type, dur = 0.9) {
     this.jumpType = type;
     this.jumpT = dur;
+    this.jumpMax = dur;
     this.el.jump.classList.remove('hidden');
   }
 
@@ -141,9 +143,34 @@ export class UI {
     }
     if (this.jumpT <= 0) return;
     this.jumpT -= dt;
-    if (this.jumpT <= 0) { this.el.jump.classList.add('hidden'); return; }
-    const c = this.el.jumpCanvas.getContext('2d');
+    const cv = this.el.jumpCanvas;
+    if (this.jumpT <= 0) {
+      this.el.jump.classList.add('hidden');
+      cv.style.transform = '';
+      this.el.jump.style.background = '#000';
+      return;
+    }
+    const c = cv.getContext('2d');
+    // lunge: the face slams toward the screen over the scare's lifetime,
+    // shuddering harder the closer it gets
+    const k = 1 - this.jumpT / (this.jumpMax || 1);
+    const lunge = 1 + k * 0.55 + Math.random() * 0.1;
+    const jx = (Math.random() - 0.5) * 34 * (0.4 + k);
+    const jy = (Math.random() - 0.5) * 26 * (0.4 + k);
+    const rot = (Math.random() - 0.5) * 3.2 * k;
+    cv.style.transform = `scale(${lunge.toFixed(3)}) translate(${jx.toFixed(1)}px,${jy.toFixed(1)}px) rotate(${rot.toFixed(2)}deg)`;
+    // strobe backdrop
+    this.el.jump.style.background = Math.random() < 0.16 ? '#2a0208' : '#000';
     drawScareFace(c, this.jumpType, 900, 600, time);
+    // chromatic tear — ghost copies split left/right on random frames
+    if (Math.random() < 0.35) {
+      c.globalCompositeOperation = 'lighter';
+      c.globalAlpha = 0.25;
+      c.drawImage(cv, -10 - Math.random() * 14, 0);
+      c.drawImage(cv, 10 + Math.random() * 14, 0);
+      c.globalAlpha = 1;
+      c.globalCompositeOperation = 'source-over';
+    }
   }
 
   // ---------- screens ----------
@@ -168,11 +195,26 @@ export class UI {
     this.el.bestRun.textContent = n > 0 ? `✦ furthest door reached: ${String(n).padStart(3, '0')}` : '';
   }
 
+  // ---------- scrap note ----------
+  toggleScrapNote(game) {
+    if (!this.el.scrapNote.classList.contains('hidden')) { this.hideScrapNote(); return; }
+    const pz = game.libPuzzle;
+    if (!pz) { this.subtitle('the scraps mean nothing here.', 1.5); return; }
+    const rows = pz.symbols.map((s, i) =>
+      `<div class="sn-row${pz.found[i] ? ' known' : ''}"><span>${s}</span><em>=</em><b>${pz.found[i] ? pz.code[i] : '?'}</b></div>`).join('');
+    this.el.scrapNote.innerHTML = `<h4>CODE SCRAPS</h4>${rows}<p>${pz.foundCount}/5 found · <kbd>E</kbd> to close</p>`;
+    this.el.scrapNote.classList.remove('hidden');
+    game.audio.play('paper');
+  }
+
+  hideScrapNote() { this.el.scrapNote.classList.add('hidden'); }
+
   // ---------- modals ----------
   closeModals() {
     this.el.shop.classList.add('hidden');
     this.el.padlock.classList.add('hidden');
     this.el.breaker.classList.add('hidden');
+    this.hideScrapNote();
     this.modalOpen = null;
   }
 
@@ -237,6 +279,11 @@ export class UI {
       };
       digs.appendChild(b);
     });
+    // what the collected scraps have revealed, right where it's needed
+    if (this.el.plLegend) {
+      this.el.plLegend.innerHTML = puzzle.symbols.map((s, i) =>
+        `<span class="pl-leg${puzzle.found[i] ? ' known' : ''}">${s} = ${puzzle.found[i] ? puzzle.code[i] : '?'}</span>`).join('');
+    }
   }
 
   openBreaker(game, puzzle) {

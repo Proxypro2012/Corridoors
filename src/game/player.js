@@ -1,6 +1,7 @@
 // the player: movement, noise, hiding, health
 
 import { clamp, circleVsRect, TAU, rectContains } from '../engine/math.js';
+import { floorColliders, stairProgressAt } from './mapgen.js';
 
 export class Player {
   constructor(x, y) {
@@ -26,6 +27,7 @@ export class Player {
     this.dead = false;
     this.walkCycle = 0;
     this.freeze = false;     // cutscene lock
+    this.floor = 0;          // 0 = ground, 1 = mezzanine deck
   }
 
   get hidden() { return !!this.hiddenIn; }
@@ -84,6 +86,15 @@ export class Player {
         const fix = circleVsRect(this.x, this.y, this.r, f);
         if (fix) { this.x = fix.x; this.y = fix.y; }
       }
+      // raised decks: solid from below, railed-in from above; stairs transition
+      if (room.platforms) {
+        for (const c of floorColliders(room, this.floor)) {
+          const fix = circleVsRect(this.x, this.y, this.r, c);
+          if (fix) { this.x = fix.x; this.y = fix.y; }
+        }
+        const sp = stairProgressAt(room, this.x, this.y);
+        if (sp) this.floor = sp.t > 0.5 ? 1 : 0;
+      }
       // closed doors block their gap
       const doors = [...room.doors];
       if (room.entryDoor) doors.push(room.entryDoor);
@@ -120,6 +131,9 @@ export class Player {
 
   damage(amount, game, source = '?') {
     if (this.dead) return;
+    // cutscenes shield the player — a frozen runner can't dodge or hide, and
+    // a death mid-script would stall the sequence forever
+    if (game.cutscene) return;
     // crucifix intercepts entity damage
     if (amount >= 25 && game.inventory.has('crucifix') && game.tryCrucifix(source)) return;
     this.health -= amount;

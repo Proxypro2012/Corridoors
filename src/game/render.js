@@ -1,7 +1,69 @@
 // world rendering: floors, walls, doors, furniture. all art is procedural canvas.
 
-import { WALL_T, DOOR_W } from './mapgen.js';
-import { TAU, clamp } from '../engine/math.js';
+import { WALL_T, DOOR_W, floorColliders } from './mapgen.js';
+import { TAU, clamp, dist, rectsOverlap } from '../engine/math.js';
+
+// snap a window decor onto its wall band; returns the pane rect + outward axis
+function windowPane(d, room) {
+  const R = room.rect;
+  switch (d.side) {
+    case 'n': return { x: d.x, y: R.y + 1, w: d.w, h: WALL_T - 2, ox: 0, oy: -1 };
+    case 's': return { x: d.x, y: R.y + R.h - WALL_T + 1, w: d.w, h: WALL_T - 2, ox: 0, oy: 1 };
+    case 'w': return { x: R.x + 1, y: d.y, w: WALL_T - 2, h: d.h, ox: -1, oy: 0 };
+    default:  return { x: R.x + R.w - WALL_T + 1, y: d.y, w: WALL_T - 2, h: d.h, ox: 1, oy: 0 };
+  }
+}
+
+// the storm outside: a dark-blue sky spill beyond the glass that deepens as
+// the player approaches, with rain sheeting down inside the spill only
+function drawWindowOutside(ctx, d, room, time, game) {
+  if (!game || !game.player) return;
+  const pane = windowPane(d, room);
+  const pcx = pane.x + pane.w / 2, pcy = pane.y + pane.h / 2;
+  const prox = clamp(1 - dist(game.player.x, game.player.y, pcx, pcy) / 300, 0, 1);
+  const depth = 60 + prox * 110;
+  const spread = 30 + prox * 40;
+  let zone;
+  if (d.side === 'n') zone = { x: pane.x - spread, y: pane.y - depth, w: pane.w + spread * 2, h: depth };
+  else if (d.side === 's') zone = { x: pane.x - spread, y: pane.y + pane.h, w: pane.w + spread * 2, h: depth };
+  else if (d.side === 'w') zone = { x: pane.x - depth, y: pane.y - spread, w: depth, h: pane.h + spread * 2 };
+  else zone = { x: pane.x + pane.w, y: pane.y - spread, w: depth, h: pane.h + spread * 2 };
+  // never paint the sky inside another room of the hotel
+  if (game.rooms && game.rooms.some(r => r !== room && rectsOverlap(zone, r.rect))) return;
+
+  const bolt = game.lightning || 0;
+  const baseA = 0.16 + prox * 0.5 + bolt * 0.3;
+  const g = d.side === 'n' ? ctx.createLinearGradient(0, zone.y + zone.h, 0, zone.y)
+    : d.side === 's' ? ctx.createLinearGradient(0, zone.y, 0, zone.y + zone.h)
+    : d.side === 'w' ? ctx.createLinearGradient(zone.x + zone.w, 0, zone.x, 0)
+    : ctx.createLinearGradient(zone.x, 0, zone.x + zone.w, 0);
+  const skyTone = bolt > 0.05 ? `205,222,255` : `38,58,110`;
+  g.addColorStop(0, `rgba(${skyTone},${baseA.toFixed(3)})`);
+  g.addColorStop(1, `rgba(${skyTone},0)`);
+  ctx.fillStyle = g;
+  ctx.fillRect(zone.x, zone.y, zone.w, zone.h);
+
+  // rain — visible only out there, heavier the closer you stand
+  if (prox > 0.02) {
+    ctx.save();
+    ctx.beginPath(); ctx.rect(zone.x, zone.y, zone.w, zone.h); ctx.clip();
+    const n = Math.round(6 + prox * 16);
+    ctx.strokeStyle = `rgba(165,195,240,${(0.12 + prox * 0.4 + bolt * 0.3).toFixed(3)})`;
+    ctx.lineWidth = 1.4;
+    const span = Math.max(zone.w, zone.h) + 60;
+    for (let i = 0; i < n; i++) {
+      const seed = (i * 127.3 + d.x * 0.7) % span;
+      const fall = (time * (240 + (i % 5) * 40) + seed * 13) % span;
+      const rx = zone.x - 30 + ((seed * 7.13) % (zone.w + 60));
+      const ry = zone.y - 20 + fall % (zone.h + 40);
+      ctx.beginPath();
+      ctx.moveTo(rx, ry);
+      ctx.lineTo(rx - 4, ry + 14);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+}
 
 const PAL = {
   hotel:      { wall: '#3d3129', wallEdge: '#241c15', wood: '#4a3826', wood2: '#41301f', carpet: '#4d2028', carpetEdge: '#672b35', tile: '#33363c' },
@@ -166,16 +228,43 @@ function drawWallDecor(ctx, room, time, game) {
       ctx.strokeStyle = '#8a7448'; ctx.lineWidth = 2;
       ctx.strokeRect(d.x - 2, d.y - 2, d.w + 4, d.h + 8);
     } else if (d.type === 'window') {
-      ctx.fillStyle = game && game.lightning > 0 ? `rgba(210,225,255,${0.5 + game.lightning * 0.5})` : '#131b2a';
-      ctx.fillRect(d.x, d.y, d.w, d.h + 6);
-      ctx.strokeStyle = '#4c4436'; ctx.lineWidth = 3;
-      ctx.strokeRect(d.x, d.y, d.w, d.h + 6);
-      ctx.beginPath(); ctx.moveTo(d.x + d.w / 2, d.y); ctx.lineTo(d.x + d.w / 2, d.y + d.h + 6); ctx.stroke();
-      // window entity silhouette
+      const pane = windowPane(d, room);
+      const bolt = game ? game.lightning || 0 : 0;
+      // cold glass set into the wall band
+      ctx.fillStyle = bolt > 0.05 ? `rgba(210,225,255,${0.5 + bolt * 0.5})` : '#16223c';
+      ctx.fillRect(pane.x, pane.y, pane.w, pane.h);
+      const glassG = pane.w > pane.h
+        ? ctx.createLinearGradient(pane.x, 0, pane.x + pane.w, 0)
+        : ctx.createLinearGradient(0, pane.y, 0, pane.y + pane.h);
+      glassG.addColorStop(0, 'rgba(120,160,230,0.25)');
+      glassG.addColorStop(0.5, 'rgba(40,60,110,0.1)');
+      glassG.addColorStop(1, 'rgba(120,160,230,0.2)');
+      ctx.fillStyle = glassG;
+      ctx.fillRect(pane.x, pane.y, pane.w, pane.h);
+      // frame + mullions along the long axis
+      ctx.strokeStyle = '#4c4436'; ctx.lineWidth = 2.5;
+      ctx.strokeRect(pane.x, pane.y, pane.w, pane.h);
+      ctx.lineWidth = 1.5;
+      if (pane.w > pane.h) {
+        for (let i = 1; i < 3; i++) {
+          const mx = pane.x + pane.w * i / 3;
+          ctx.beginPath(); ctx.moveTo(mx, pane.y); ctx.lineTo(mx, pane.y + pane.h); ctx.stroke();
+        }
+      } else {
+        for (let i = 1; i < 3; i++) {
+          const my = pane.y + pane.h * i / 3;
+          ctx.beginPath(); ctx.moveTo(pane.x, my); ctx.lineTo(pane.x + pane.w, my); ctx.stroke();
+        }
+      }
+      // the Window entity — a hunched silhouette caught by the lightning
       if (d.showFigure) {
-        ctx.fillStyle = 'rgba(5,5,8,0.9)';
-        ctx.beginPath(); ctx.arc(d.x + d.w / 2, d.y + d.h / 2, 9, 0, TAU); ctx.fill();
-        ctx.fillRect(d.x + d.w / 2 - 12, d.y + d.h / 2 + 4, 24, 10);
+        const cx = pane.x + pane.w / 2, cy = pane.y + pane.h / 2;
+        ctx.fillStyle = 'rgba(4,4,8,0.95)';
+        ctx.beginPath(); ctx.arc(cx, cy - 3, 6, 0, TAU); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(cx, cy + 5, 9, 6, 0, 0, TAU); ctx.fill();
+        ctx.fillStyle = 'rgba(220,230,255,0.75)';
+        ctx.beginPath(); ctx.arc(cx - 2, cy - 4, 1.2, 0, TAU); ctx.fill();
+        ctx.beginPath(); ctx.arc(cx + 2, cy - 4, 1.2, 0, TAU); ctx.fill();
       }
     } else if (d.type === 'elevator') {
       const open = d.openT || 0;
@@ -201,40 +290,70 @@ function drawFurniture(ctx, room, time, game) {
   for (const f of room.furniture) {
     switch (f.type) {
       case 'wardrobe': {
-        ctx.fillStyle = f.locker ? '#3d4450' : '#33241a';
-        rr(ctx, f.x, f.y, f.w, f.h, 3); ctx.fill();
-        ctx.strokeStyle = f.locker ? '#59637a' : '#4f3826'; ctx.lineWidth = 2;
-        rr(ctx, f.x + 2, f.y + 2, f.w - 4, f.h - 4, 2); ctx.stroke();
-        // double doors + handles (long axis)
+        // tall imposing cabinet — reads instantly different from a dresser:
+        // near-black walnut, carved double doors, brass ring handles, plinth
         const vert = f.h > f.w;
-        ctx.beginPath();
-        if (vert) { ctx.moveTo(f.x + 2, f.y + f.h / 2); ctx.lineTo(f.x + f.w - 2, f.y + f.h / 2); }
-        else { ctx.moveTo(f.x + f.w / 2, f.y + 2); ctx.lineTo(f.x + f.w / 2, f.y + f.h - 2); }
-        ctx.stroke();
-        ctx.fillStyle = '#c7a94f';
-        if (vert) { ctx.fillRect(f.x + f.w / 2 - 2, f.y + f.h / 2 - 8, 4, 6); ctx.fillRect(f.x + f.w / 2 - 2, f.y + f.h / 2 + 2, 4, 6); }
-        else { ctx.fillRect(f.x + f.w / 2 - 8, f.y + f.h / 2 - 2, 6, 4); ctx.fillRect(f.x + f.w / 2 + 2, f.y + f.h / 2 - 2, 6, 4); }
+        ctx.fillStyle = 'rgba(0,0,0,0.45)';
+        rr(ctx, f.x - 3, f.y - 3, f.w + 6, f.h + 6, 5); ctx.fill();   // heavy footprint shadow
+        ctx.fillStyle = f.locker ? '#2e3644' : '#1f1410';
+        rr(ctx, f.x, f.y, f.w, f.h, 4); ctx.fill();
+        // crown edge (the side facing the room glows faintly)
+        ctx.fillStyle = f.locker ? '#4a5468' : '#3a2417';
+        const crown = 5;
+        if (f.side === 'n') ctx.fillRect(f.x, f.y + f.h - crown, f.w, crown);
+        else if (f.side === 's') ctx.fillRect(f.x, f.y, f.w, crown);
+        else if (f.side === 'w') ctx.fillRect(f.x + f.w - crown, f.y, crown, f.h);
+        else ctx.fillRect(f.x, f.y, crown, f.h);
+        // carved double doors with inset panels
+        ctx.strokeStyle = f.locker ? '#5d6a82' : '#54382a'; ctx.lineWidth = 2;
+        if (vert) {
+          rr(ctx, f.x + 4, f.y + 4, f.w - 8, f.h / 2 - 6, 2); ctx.stroke();
+          rr(ctx, f.x + 4, f.y + f.h / 2 + 2, f.w - 8, f.h / 2 - 6, 2); ctx.stroke();
+        } else {
+          rr(ctx, f.x + 4, f.y + 4, f.w / 2 - 6, f.h - 8, 2); ctx.stroke();
+          rr(ctx, f.x + f.w / 2 + 2, f.y + 4, f.w / 2 - 6, f.h - 8, 2); ctx.stroke();
+        }
+        // brass ring handles at the door seam
+        ctx.strokeStyle = '#d8b45a'; ctx.lineWidth = 2;
+        const hcx = f.x + f.w / 2, hcy = f.y + f.h / 2;
+        if (vert) {
+          ctx.beginPath(); ctx.arc(hcx - 5, hcy, 3.2, 0, TAU); ctx.stroke();
+          ctx.beginPath(); ctx.arc(hcx + 5, hcy, 3.2, 0, TAU); ctx.stroke();
+        } else {
+          ctx.beginPath(); ctx.arc(hcx, hcy - 5, 3.2, 0, TAU); ctx.stroke();
+          ctx.beginPath(); ctx.arc(hcx, hcy + 5, 3.2, 0, TAU); ctx.stroke();
+        }
+        // occupied: warm breath of light through the door seam
         if (f.occupied) {
-          ctx.fillStyle = 'rgba(240,220,170,0.10)';
-          rr(ctx, f.x + 3, f.y + 3, f.w - 6, f.h - 6, 2); ctx.fill();
+          ctx.fillStyle = 'rgba(240,220,170,0.16)';
+          if (vert) ctx.fillRect(f.x + 3, hcy - 1.5, f.w - 6, 3);
+          else ctx.fillRect(hcx - 1.5, f.y + 3, 3, f.h - 6);
         }
         break;
       }
       case 'dresser': {
-        ctx.fillStyle = '#3c2c1e';
+        // low honey-oak chest — bright top, drawer stack, round knobs.
+        // deliberately warm + light against the wardrobe's near-black bulk
+        ctx.fillStyle = '#5a4127';
         rr(ctx, f.x, f.y, f.w, f.h, 3); ctx.fill();
+        ctx.fillStyle = '#6e5233';
+        rr(ctx, f.x + 1.5, f.y + 1.5, f.w - 3, f.h - 3, 2); ctx.fill();
         const n = f.drawers ? f.drawers.length : 2;
         const vert = f.h > f.w;
         for (let i = 0; i < n; i++) {
-          const dx = vert ? f.x + 3 : f.x + 4 + i * ((f.w - 8) / n);
-          const dy = vert ? f.y + 4 + i * ((f.h - 8) / n) : f.y + 3;
-          const dw = vert ? f.w - 6 : (f.w - 8) / n - 3;
-          const dh = vert ? (f.h - 8) / n - 3 : f.h - 6;
+          const dx = vert ? f.x + 4 : f.x + 5 + i * ((f.w - 10) / n);
+          const dy = vert ? f.y + 5 + i * ((f.h - 10) / n) : f.y + 4;
+          const dw = vert ? f.w - 8 : (f.w - 10) / n - 3;
+          const dh = vert ? (f.h - 10) / n - 3 : f.h - 8;
           const open = f.drawers && f.drawers[i].open;
-          ctx.fillStyle = open ? '#241a10' : '#54402c';
-          ctx.fillRect(dx, dy, dw, dh);
-          ctx.fillStyle = '#c7a94f';
-          ctx.fillRect(dx + dw / 2 - 3, dy + dh / 2 - 1, 6, 3);
+          ctx.fillStyle = open ? '#241a10' : '#82653f';
+          rr(ctx, dx, dy, dw, dh, 2); ctx.fill();
+          ctx.strokeStyle = 'rgba(0,0,0,0.25)'; ctx.lineWidth = 1;
+          rr(ctx, dx, dy, dw, dh, 2); ctx.stroke();
+          if (!open) {
+            ctx.fillStyle = '#2e2115';
+            ctx.beginPath(); ctx.arc(dx + dw / 2, dy + dh / 2, 2.4, 0, TAU); ctx.fill();
+          }
         }
         break;
       }
@@ -374,6 +493,20 @@ function drawFurniture(ctx, room, time, game) {
         for (let i = 1; i < 4; i++) {
           ctx.beginPath(); ctx.moveTo(f.x + (f.w / 4) * i, f.y + 4); ctx.lineTo(f.x + (f.w / 4) * i, f.y + f.h - 4); ctx.stroke();
         }
+        // live flame tongues while the jet is firing
+        if (f.fireOn) {
+          const cx = f.x + f.w / 2, cy = f.y + f.h / 2;
+          for (let i = 0; i < 5; i++) {
+            const a = (i / 5) * TAU + time * 3;
+            const fx2 = cx + Math.cos(a) * 8, fy2 = cy + Math.sin(a) * 6;
+            const hgt = 10 + Math.sin(time * 17 + i * 2.4) * 6;
+            ctx.fillStyle = i % 2 ? 'rgba(255,150,40,0.8)' : 'rgba(255,220,90,0.85)';
+            ctx.beginPath();
+            ctx.moveTo(fx2 - 5, fy2);
+            ctx.quadraticCurveTo(fx2, fy2 - hgt * 1.8, fx2 + 5, fy2);
+            ctx.closePath(); ctx.fill();
+          }
+        }
         break;
       }
     }
@@ -512,11 +645,93 @@ export function drawDoor(ctx, door, time, game) {
   }
 }
 
+// -------------------------------------------------- raised decks and stairs
+
+function drawPlatforms(ctx, room, time) {
+  if (!room.platforms) return;
+  for (const p of room.platforms) {
+    // shadow the deck casts down into the hall
+    const S = 34;
+    let g;
+    if (p.inner === 's') g = ctx.createLinearGradient(0, p.y + p.h, 0, p.y + p.h + S);
+    else if (p.inner === 'n') g = ctx.createLinearGradient(0, p.y, 0, p.y - S);
+    else if (p.inner === 'e') g = ctx.createLinearGradient(p.x + p.w, 0, p.x + p.w + S, 0);
+    else g = ctx.createLinearGradient(p.x, 0, p.x - S, 0);
+    g.addColorStop(0, 'rgba(0,0,0,0.5)');
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    if (p.inner === 's') ctx.fillRect(p.x, p.y + p.h, p.w, S);
+    else if (p.inner === 'n') ctx.fillRect(p.x, p.y - S, p.w, S);
+    else if (p.inner === 'e') ctx.fillRect(p.x + p.w, p.y, S, p.h);
+    else ctx.fillRect(p.x - S, p.y, S, p.h);
+
+    // deck boards, laid along the long axis
+    ctx.fillStyle = '#46331f';
+    ctx.fillRect(p.x, p.y, p.w, p.h);
+    ctx.strokeStyle = 'rgba(0,0,0,0.22)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    if (p.w >= p.h) {
+      for (let y = p.y + 26; y < p.y + p.h; y += 26) { ctx.moveTo(p.x, y); ctx.lineTo(p.x + p.w, y); }
+    } else {
+      for (let x = p.x + 26; x < p.x + p.w; x += 26) { ctx.moveTo(x, p.y); ctx.lineTo(x, p.y + p.h); }
+    }
+    ctx.stroke();
+    // lip highlight along the inner edge
+    ctx.fillStyle = 'rgba(214,178,120,0.25)';
+    if (p.inner === 's') ctx.fillRect(p.x, p.y + p.h - 3, p.w, 3);
+    else if (p.inner === 'n') ctx.fillRect(p.x, p.y, p.w, 3);
+    else if (p.inner === 'e') ctx.fillRect(p.x + p.w - 3, p.y, 3, p.h);
+    else ctx.fillRect(p.x, p.y, 3, p.h);
+  }
+
+  // staircases: framed runs of alternating treads
+  for (const st of room.stairs) {
+    const vert = st.h >= st.w;
+    ctx.fillStyle = '#2c1f13';
+    ctx.fillRect(st.x - 3, st.y - 3, st.w + 6, st.h + 6);
+    const n = Math.max(6, Math.round((vert ? st.h : st.w) / 20));
+    for (let i = 0; i < n; i++) {
+      const t0 = i / n, t1 = (i + 1) / n;
+      ctx.fillStyle = i % 2 ? '#543d27' : '#48331f';
+      if (vert) ctx.fillRect(st.x, st.y + st.h * t0, st.w, st.h * (t1 - t0) - 1.5);
+      else ctx.fillRect(st.x + st.w * t0, st.y, st.w * (t1 - t0) - 1.5, st.h);
+    }
+    // depth cue: darker toward the low end
+    const gg = vert
+      ? ctx.createLinearGradient(0, st.hy, 0, st.ly)
+      : ctx.createLinearGradient(st.hx, 0, st.lx, 0);
+    gg.addColorStop(0, 'rgba(0,0,0,0)');
+    gg.addColorStop(1, 'rgba(0,0,0,0.3)');
+    ctx.fillStyle = gg;
+    ctx.fillRect(st.x, st.y, st.w, st.h);
+  }
+
+  // railings — drawn straight from the collision geometry so sight matches touch
+  for (const rail of floorColliders(room, 1)) {
+    ctx.fillStyle = '#241812';
+    ctx.fillRect(rail.x, rail.y, rail.w, rail.h);
+    ctx.fillStyle = '#5c4128';
+    if (rail.w >= rail.h) {
+      ctx.fillRect(rail.x, rail.y, rail.w, 2.5);
+      for (let x = rail.x + 10; x < rail.x + rail.w - 4; x += 44) ctx.fillRect(x, rail.y, 4, rail.h);
+    } else {
+      ctx.fillRect(rail.x, rail.y, 2.5, rail.h);
+      for (let y = rail.y + 10; y < rail.y + rail.h - 4; y += 44) ctx.fillRect(rail.x, y, rail.w, 4);
+    }
+  }
+}
+
 // ------------------------------------------------------------------ room
 
 export function drawRoom(ctx, room, time, game) {
+  // the storm outside the glass, painted beyond the walls
+  for (const d of room.decor) {
+    if (d.type === 'window') drawWindowOutside(ctx, d, room, time, game);
+  }
   drawFloor(ctx, room);
   drawDecor(ctx, room, time);
+  drawPlatforms(ctx, room, time);
   drawFurniture(ctx, room, time, game);
   drawItems(ctx, room, time);
 
